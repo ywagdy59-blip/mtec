@@ -1,0 +1,21 @@
+services:
+  - type: web
+    name: mtec-software-api-ywagdy59
+    runtime: node
+    plan: free
+    region: frankfurt
+    rootDir: backend
+    buildCommand: npm ci
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: CLIENT_URL
+        value: https://mtec-rrrg.vercel.app
+      - key: TRUST_PROXY
+        value: "1"
+      - key: MONGO_URL
+        sync: false
+      - key: JWT_SECRET
+        generateValue: true

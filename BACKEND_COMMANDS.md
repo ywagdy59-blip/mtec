@@ -75,33 +75,17 @@ npm start
 
 The API listens on `http://localhost:5000`.
 
-## Vercel deployment
+## Render backend deployment
 
-The backend and frontend are separate Vercel projects. Set each project's Root Directory to its folder:
+The frontend remains on Vercel; the Express backend runs as a Render web service. The root `render.yaml` defines the backend service, Frankfurt region, production environment, health check, and required environment variables.
 
-- Backend: `backend`
-- Frontend: `frontend`
+1. In Render, choose **New > Blueprint** and connect this Git repository's `main` branch.
+2. Select `render.yaml` at the repository root and create the `mtec-software-api-ywagdy59` service.
+3. Enter the existing MongoDB Atlas URI for `MONGO_URL` in the Blueprint prompt. Render generates `JWT_SECRET`; do not commit either value.
+4. After the service is live, open its **Connect > Outbound** panel. Add the listed outbound IP ranges to MongoDB Atlas **Network Access**. Render's ranges are shared and region-specific; keep the service in Frankfurt to use the matching ranges.
+5. In the Vercel frontend project's Production Environment Variables, set `VITE_API_URL` to `https://mtec-software-api-ywagdy59.onrender.com/api`, then redeploy the frontend.
 
-In the backend project's Production Environment Variables, configure:
-
-```dotenv
-MONGO_URL=<MongoDB Atlas connection URI reachable from Vercel>
-JWT_SECRET=<a random secret of at least 32 characters>
-CLIENT_URL=https://mtec-rrrg.vercel.app
-TRUST_PROXY=1
-```
-
-Set the backend project's Root Directory to `backend` and its Framework Preset to `Other`. The API is served by `backend/api/index.js`; the Vercel configuration and serverless entry point must be included in the Git deployment.
-
-Do not use a `localhost` or `127.0.0.1` MongoDB URI on Vercel. Add the Vercel deployment to the MongoDB Atlas Network Access allowlist, and use the same Atlas URI that works locally without committing it. A healthy `/api/health` response alone does not confirm database access; course, review, and category routes also need a successful MongoDB connection.
-
-In the frontend project's Production Environment Variables, configure:
-
-```dotenv
-VITE_API_URL=https://backend-flame-seven-64.vercel.app/api
-```
-
-The frontend also defaults to the current backend URL in production if `VITE_API_URL` is unset. Redeploy both projects after changing code or environment variables. Course video uploads require durable external storage; files written to a Vercel function's local filesystem are not persistent.
+`CLIENT_URL` is set to the frontend's production domain in `render.yaml`. The backend binds to `0.0.0.0` and uses Render's `PORT`. Verify `/api/health`, `/api/course`, `/api/reviews`, and `/api/catogery` after deployment. The free Render service may sleep when idle and cold-start on the next request. Uploaded course videos need durable external storage; files written to a Render service's local filesystem are not persistent.
 
 ## Admin login
 

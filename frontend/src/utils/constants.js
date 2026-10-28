@@ -1,5 +1,5 @@
 const DEFAULT_API_URL = import.meta.env.PROD
-  ? "https://backend-flame-seven-64.vercel.app/api"
+  ? "https://mtec-software-api-ywagdy59.onrender.com/api"
   : "http://localhost:5000/api";
 
 export const API_URL = import.meta.env.VITE_API_URL || DEFAULT_API_URL;
