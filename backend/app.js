@@ -52,7 +52,12 @@ const normalizeOrigin = (url) =>
   url.trim().replace(/\/+$/, "");
 
 const allowedOrigins = new Set(
-  (process.env.CLIENT_URL || "http://localhost:5173")
+  (
+    process.env.CLIENT_URL ||
+    (process.env.NODE_ENV === "production"
+      ? "https://mtec-rrrg.vercel.app"
+      : "http://localhost:5173")
+  )
     .split(",")
     .map(normalizeOrigin)
     .filter(Boolean)

@@ -75,6 +75,34 @@ npm start
 
 The API listens on `http://localhost:5000`.
 
+## Vercel deployment
+
+The backend and frontend are separate Vercel projects. Set each project's Root Directory to its folder:
+
+- Backend: `backend`
+- Frontend: `frontend`
+
+In the backend project's Production Environment Variables, configure:
+
+```dotenv
+MONGO_URL=<MongoDB Atlas connection URI reachable from Vercel>
+JWT_SECRET=<a random secret of at least 32 characters>
+CLIENT_URL=https://mtec-rrrg.vercel.app
+TRUST_PROXY=1
+```
+
+Set the backend project's Root Directory to `backend` and its Framework Preset to `Other`. The API is served by `backend/api/index.js`; the Vercel configuration and serverless entry point must be included in the Git deployment.
+
+Do not use a `localhost` or `127.0.0.1` MongoDB URI on Vercel. Add the Vercel deployment to the MongoDB Atlas Network Access allowlist, and use the same Atlas URI that works locally without committing it. A healthy `/api/health` response alone does not confirm database access; course, review, and category routes also need a successful MongoDB connection.
+
+In the frontend project's Production Environment Variables, configure:
+
+```dotenv
+VITE_API_URL=https://backend-flame-seven-64.vercel.app/api
+```
+
+The frontend also defaults to the current backend URL in production if `VITE_API_URL` is unset. Redeploy both projects after changing code or environment variables. Course video uploads require durable external storage; files written to a Vercel function's local filesystem are not persistent.
+
 ## Admin login
 
 - Email: the value of `ADMIN_EMAIL` in `.env`
