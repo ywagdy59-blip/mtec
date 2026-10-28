@@ -8,8 +8,7 @@ const {
   changePassword,
   deleteUser,
 } = require("../controllers/userController");
-const { getMe } = require("../controllers/authController");
-
+const { me: getMe } = require("../controllers/authController");
 const authMiddleware = require("../middleware/auth");
 const adminMiddleware = require("../middleware/admin");
 const {

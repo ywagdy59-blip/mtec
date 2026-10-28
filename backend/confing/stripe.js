@@ -1,3 +1,4 @@
+
 const Stripe = require("stripe");
 
 let stripe;
@@ -10,7 +11,9 @@ const getStripe = () => {
   }
 
   if (!stripe) {
-    stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
+    stripe = new Stripe(process.env.STRIPE_SECRET_KEY, {
+      // هنثبت إصدار الـ API بعد ما نعرف إعدادات Stripe عندك
+    });
   }
 
   return stripe;

@@ -71,7 +71,7 @@ const updateLead = asyncHandler(async (req, res) => {
   const lead = await Lead.findByIdAndUpdate(
     req.params.id,
     { $set: req.body },
-    { new: true, runValidators: true }
+    { returnDocument: "after", runValidators: true }
   );
   if (!lead) return notFound(res);
 

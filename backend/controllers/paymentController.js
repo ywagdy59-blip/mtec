@@ -1,47 +1,123 @@
+
 const asyncHandler = require("../middleware/asyncHandler");
 const getStripe = require("../confing/stripe");
+
+const mongoose = require("mongoose");
 
 const Course = require("../models/Course");
 const Enrollment = require("../models/Enrollment");
 const User = require("../models/User");
+const GuestOrder = require("../models/GuestOrder");
+const { fulfillGuestOrder } = require("./guestOrderController");
+
 const toPublicCourse = require("../utils/publicCourse");
 
 // =====================================
 // HELPERS
 // =====================================
-const clientUrl = () =>
-  (process.env.CLIENT_URL || "http://localhost:5173")
+
+const clientUrl = () => {
+  const url = (
+    process.env.CLIENT_URL || "http://localhost:5173"
+  )
     .split(",")[0]
     .trim()
     .replace(/\/+$/, "");
 
-const currency = () => (process.env.STRIPE_CURRENCY || "usd").toLowerCase();
+  return url;
+};
 
-// Stripe بياخد المبلغ بأصغر وحدة (سنت). (العملات اللي من غير كسور زي JPY محتاجة معاملة تانية)
+const currency = () =>
+  (process.env.STRIPE_CURRENCY || "egp").toLowerCase();
+
+// الكود بيدعم العملات اللي بتستخدم منزلتين عشريتين فقط.
 const toMinorUnits = (price) => Math.round(price * 100);
 
-// بيفتح الكورس لليوزر بعد ما Stripe يأكد الدفع. آمن لو اتنادى أكتر من مرة
-// (الـ webhook وصفحة النجاح ممكن ينادوه الاتنين).
+const isValidPrice = (price) =>
+  Number.isFinite(price) &&
+  price >= 0 &&
+  Number.isSafeInteger(toMinorUnits(price));
+
+// =====================================
+// FULFILL PAID SESSION
+// =====================================
+
 const fulfillSession = async (session) => {
-  if (session.payment_status !== "paid") return null;
+  // لازم تكون جلسة دفع مكتملة ومدفوعة.
+  if (
+    session.payment_status !== "paid" ||
+    session.mode !== "payment"
+  ) {
+    return null;
+  }
 
   const { userId, courseId } = session.metadata || {};
-  if (!userId || !courseId) return null;
 
-  const alreadyPaid = await Enrollment.findOne({
+  // التأكد من صحة بيانات الجلسة.
+  if (
+    !mongoose.isValidObjectId(userId) ||
+    !mongoose.isValidObjectId(courseId)
+  ) {
+    throw new Error("Invalid userId or courseId in Stripe session");
+  }
+
+  if (session.client_reference_id !== userId) {
+    throw new Error("Stripe session user mismatch");
+  }
+
+  // نجيب بيانات الكورس من قاعدة البيانات.
+  const course = await Course.findById(courseId);
+
+  if (!course) {
+    throw new Error("Course not found for Stripe session");
+  }
+
+  if (!isValidPrice(course.price) || course.price === 0) {
+    throw new Error("Invalid paid course price");
+  }
+
+  // نجيب التسجيل الحالي لو موجود.
+  const existing = await Enrollment.findOne({
     user: userId,
     course: courseId,
-    status: "paid",
   });
-  if (alreadyPaid) return alreadyPaid;
+
+  // نتحقق إن المبلغ مطابق لسعر الكورس.
+  // لو فيه تسجيل pending، نستخدم المبلغ المسجل وقت بدء الدفع
+  // حتى لا يتسبب تغيير السعر لاحقًا في رفض دفعة صحيحة.
+  const expectedAmount = existing
+    ? existing.amountTotal
+    : toMinorUnits(course.price);
+
+  if (
+    !Number.isSafeInteger(session.amount_total) ||
+    session.amount_total !== expectedAmount
+  ) {
+    throw new Error("Stripe payment amount does not match");
+  }
+
+  if (
+    String(session.currency || "").toLowerCase() !== currency()
+  ) {
+    throw new Error("Stripe payment currency does not match");
+  }
+
+  // لو اتسجل الدفع بالفعل، نرجع التسجيل الموجود.
+  if (existing?.status === "paid") {
+    return existing;
+  }
 
   const paymentIntentId =
     typeof session.payment_intent === "string"
       ? session.payment_intent
       : session.payment_intent?.id;
 
+  // تحديث التسجيل الموجود أو إنشاء تسجيل جديد.
   return Enrollment.findOneAndUpdate(
-    { user: userId, course: courseId },
+    {
+      user: userId,
+      course: courseId,
+    },
     {
       $set: {
         status: "paid",
@@ -52,43 +128,73 @@ const fulfillSession = async (session) => {
         paidAt: new Date(),
       },
     },
-  {
-  upsert: true,
-  returnDocument: "after",
-  setDefaultsOnInsert: true,
-}
+    {
+      upsert: true,
+      returnDocument: "after",
+      setDefaultsOnInsert: true,
+      runValidators: true,
+    }
   );
 };
 
 // =====================================
 // CREATE CHECKOUT SESSION
-// POST /api/payments/checkout    body: { courseId }
+// POST /api/payments/checkout
+// Body: { courseId }
 // =====================================
+
 const createCheckoutSession = asyncHandler(async (req, res) => {
   const { courseId } = req.body;
 
-  // السعر بيتاخد من الداتابيز، مش من الفرونت أبداً
-  const course = await Course.findOne({ _id: courseId, isPublished: true });
+  // 1. التحقق من Course ID.
+  if (!mongoose.isValidObjectId(courseId)) {
+    res.status(400);
+    throw new Error("Invalid course ID");
+  }
+
+  // 2. جلب الكورس المنشور.
+  const course = await Course.findOne({
+    _id: courseId,
+    isPublished: true,
+  });
 
   if (!course) {
     res.status(404);
     throw new Error("Course not found");
   }
 
-  const existing = await Enrollment.findOne({
+  // 3. التأكد من صحة السعر.
+  if (!isValidPrice(course.price)) {
+    res.status(400);
+    throw new Error("Invalid course price");
+  }
+
+  // 4. التأكد من وجود المستخدم والإيميل.
+  const user = await User.findById(req.user.id).select("email");
+
+  if (!user || !user.email) {
+    res.status(400);
+    throw new Error("A valid user email is required");
+  }
+
+  // 5. البحث عن تسجيل سابق.
+  let existing = await Enrollment.findOne({
     user: req.user.id,
     course: course._id,
   });
 
-  if (existing && existing.status === "paid") {
+  if (existing?.status === "paid") {
     res.status(409);
     throw new Error("You are already enrolled in this course");
   }
 
-  // كورس مجاني: اشتراك مباشر من غير Stripe
+  // 6. تسجيل الكورس المجاني بدون Stripe.
   if (course.price === 0) {
     const enrollment = await Enrollment.findOneAndUpdate(
-      { user: req.user.id, course: course._id },
+      {
+        user: req.user.id,
+        course: course._id,
+      },
       {
         $set: {
           status: "paid",
@@ -97,14 +203,15 @@ const createCheckoutSession = asyncHandler(async (req, res) => {
           paidAt: new Date(),
         },
       },
- {
-  upsert: true,
-  returnDocument: "after",
-  setDefaultsOnInsert: true,
-}
+      {
+        upsert: true,
+        returnDocument: "after",
+        setDefaultsOnInsert: true,
+        runValidators: true,
+      }
     );
 
-    return res.status(201).json({
+    return res.status(200).json({
       success: true,
       free: true,
       message: "Enrolled successfully",
@@ -112,23 +219,59 @@ const createCheckoutSession = asyncHandler(async (req, res) => {
     });
   }
 
-  const stripe = getStripe();
-  const user = await User.findById(req.user.id).select("email");
   const unitAmount = toMinorUnits(course.price);
 
-  // لو كان فيه جلسة دفع قديمة لسه مفتوحة نقفلها، عشان اليوزر ما يدفعش مرتين
+  if (!Number.isSafeInteger(unitAmount) || unitAmount <= 0) {
+    res.status(400);
+    throw new Error("Invalid payment amount");
+  }
+
+  const stripe = getStripe();
+
+  // 7. فحص جلسة الدفع القديمة قبل إنشاء جلسة جديدة.
   if (existing?.stripeSessionId) {
+    let oldSession;
+
     try {
-      await stripe.checkout.sessions.expire(existing.stripeSessionId);
-    } catch {
-      // الجلسة خلصت أو اتقفلت بالفعل، عادي
+      oldSession = await stripe.checkout.sessions.retrieve(
+        existing.stripeSessionId
+      );
+    } catch (error) {
+      // نسمح بإنشاء جلسة جديدة لو الجلسة القديمة غير موجودة.
+      if (error.statusCode !== 404) {
+        throw error;
+      }
+    }
+
+    if (oldSession?.payment_status === "paid") {
+      await fulfillSession(oldSession);
+
+      res.status(409);
+      throw new Error(
+        "Payment already completed. Refresh your courses"
+      );
+    }
+
+    if (oldSession?.status === "open") {
+      await stripe.checkout.sessions.expire(oldSession.id);
+    } else if (
+      oldSession?.status === "complete" &&
+      oldSession?.payment_status !== "paid"
+    ) {
+      // لا ننشئ جلسة أخرى لو الدفع السابق ما زال قيد المعالجة.
+      res.status(409);
+      throw new Error(
+        "Previous payment is still processing. Please try again later"
+      );
     }
   }
 
+  // 8. إنشاء جلسة Stripe.
   const session = await stripe.checkout.sessions.create({
     mode: "payment",
     customer_email: user.email,
     client_reference_id: req.user.id,
+
     line_items: [
       {
         quantity: 1,
@@ -137,51 +280,66 @@ const createCheckoutSession = asyncHandler(async (req, res) => {
           unit_amount: unitAmount,
           product_data: {
             name: course.title,
-            // Stripe بيقبل صور https بس
-            ...(course.thumbnail && course.thumbnail.startsWith("https://")
+            ...(course.thumbnail?.startsWith("https://")
               ? { images: [course.thumbnail] }
               : {}),
           },
         },
       },
     ],
+
     metadata: {
       userId: req.user.id,
       courseId: course._id.toString(),
     },
-    success_url: `${clientUrl()}/payment/success?session_id={CHECKOUT_SESSION_ID}`,
+
+    success_url:
+      `${clientUrl()}/payment/success?session_id={CHECKOUT_SESSION_ID}`,
+
     cancel_url: `${clientUrl()}/courses/${course._id}`,
   });
 
-  // سجل محاولة الدفع (pending). الاشتراك بيتفعل بس لما Stripe يأكد الدفع
-  if (existing) {
-    existing.stripeSessionId = session.id;
-    existing.amountTotal = unitAmount;
-    existing.currency = currency();
-    await existing.save();
-  } else {
-    await Enrollment.create({
-      user: req.user.id,
-      course: course._id,
-      status: "pending",
-      stripeSessionId: session.id,
-      amountTotal: unitAmount,
-      currency: currency(),
-    });
+  // 9. حفظ محاولة الدفع في MongoDB.
+  try {
+    if (existing) {
+      existing.status = "pending";
+      existing.stripeSessionId = session.id;
+      existing.amountTotal = unitAmount;
+      existing.currency = currency();
+
+      await existing.save();
+    } else {
+      existing = await Enrollment.create({
+        user: req.user.id,
+        course: course._id,
+        status: "pending",
+        stripeSessionId: session.id,
+        amountTotal: unitAmount,
+        currency: currency(),
+      });
+    }
+  } catch (error) {
+    // Stripe أنشأ الجلسة بالفعل؛ الخطأ هنا معناه إن حفظها فشل.
+    console.error(
+      "Failed to save Stripe checkout session:",
+      error.message
+    );
+
+    throw error;
   }
 
-  res.status(200).json({
+  return res.status(200).json({
     success: true,
     sessionId: session.id,
-    url: session.url, // الفرونت يعمل window.location.href = url
+    url: session.url,
   });
 });
 
 // =====================================
 // STRIPE WEBHOOK
 // POST /api/payments/webhook
-// متسجل في app.js قبل express.json() عشان يستقبل الـ body خام
 // =====================================
+
 const stripeWebhook = async (req, res) => {
   const secret = process.env.STRIPE_WEBHOOK_SECRET;
 
@@ -193,6 +351,7 @@ const stripeWebhook = async (req, res) => {
   }
 
   let event;
+
   try {
     event = getStripe().webhooks.constructEvent(
       req.body,
@@ -209,49 +368,80 @@ const stripeWebhook = async (req, res) => {
   try {
     switch (event.type) {
       case "checkout.session.completed":
-      case "checkout.session.async_payment_succeeded":
-        await fulfillSession(event.data.object);
+      case "checkout.session.async_payment_succeeded": {
+        if (event.data.object.metadata?.guestOrderId) {
+          await fulfillGuestOrder(event.data.object);
+        } else {
+          await fulfillSession(event.data.object);
+        }
         break;
+      }
 
       case "checkout.session.expired":
+      case "checkout.session.async_payment_failed": {
+        // Close only pending records linked to the failed Stripe session.
         await Enrollment.deleteOne({
           stripeSessionId: event.data.object.id,
           status: "pending",
         });
+        await GuestOrder.updateOne(
+          { stripeSessionId: event.data.object.id, status: "pending" },
+          { $set: { status: "cancelled" } }
+        );
         break;
+      }
 
       default:
         break;
     }
 
-    res.status(200).json({ received: true });
+    return res.status(200).json({ received: true });
   } catch (error) {
-    // بنرجّع 500 عشان Stripe يحاول تاني
+    // Stripe يعيد إرسال الـ Webhook عند استلام 500.
     console.error("Stripe webhook handling failed:", error);
-    res.status(500).json({ success: false, message: "Webhook handling failed" });
+
+    return res.status(500).json({
+      success: false,
+      message: "Webhook handling failed",
+    });
   }
 };
 
 // =====================================
-// CONFIRM SESSION (لصفحة النجاح في الفرونت)
+// CONFIRM SESSION
 // GET /api/payments/session/:sessionId
-// بتشتغل حتى لو الـ webhook اتأخر (أو في التطوير من غير Stripe CLI)
 // =====================================
+
 const confirmSession = asyncHandler(async (req, res) => {
+  const sessionId = req.params.sessionId;
+
+  if (
+    typeof sessionId !== "string" ||
+    !sessionId.startsWith("cs_")
+  ) {
+    res.status(400);
+    throw new Error("Invalid Stripe session ID");
+  }
+
   const session = await getStripe().checkout.sessions.retrieve(
-    req.params.sessionId
+    sessionId
   );
 
-  // اليوزر يشوف جلساته هو بس
+  // الجلسة لازم تكون خاصة بالمستخدم الحالي.
   if (session.client_reference_id !== req.user.id) {
     res.status(403);
     throw new Error("This payment session does not belong to you");
   }
 
-  const paid = session.payment_status === "paid";
-  const enrollment = paid ? await fulfillSession(session) : null;
+  const paid =
+    session.payment_status === "paid" &&
+    session.mode === "payment";
 
-  res.status(200).json({
+  const enrollment = paid
+    ? await fulfillSession(session)
+    : null;
+
+  return res.status(200).json({
     success: true,
     paid,
     status: session.status,
@@ -263,6 +453,7 @@ const confirmSession = asyncHandler(async (req, res) => {
 // MY COURSES
 // GET /api/payments/my-courses
 // =====================================
+
 const getMyCourses = asyncHandler(async (req, res) => {
   const enrollments = await Enrollment.find({
     user: req.user.id,
@@ -271,23 +462,29 @@ const getMyCourses = asyncHandler(async (req, res) => {
     .sort({ paidAt: -1 })
     .populate({
       path: "course",
-      populate: { path: "category", select: "name" },
+      populate: {
+        path: "category",
+        select: "name",
+      },
     })
     .lean();
 
-  // بنتجاهل أي اشتراك كورسه اتمسح
   const courses = enrollments
     .filter((enrollment) => enrollment.course)
     .map((enrollment) => ({
       course: toPublicCourse(enrollment.course),
     }));
 
-  res.status(200).json({
+  return res.status(200).json({
     success: true,
     results: courses.length,
     courses,
   });
 });
+
+// =====================================
+// EXPORTS
+// =====================================
 
 module.exports = {
   createCheckoutSession,

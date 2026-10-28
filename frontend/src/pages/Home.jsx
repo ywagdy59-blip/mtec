@@ -1,8 +1,10 @@
 import { useState } from "react";
 import Hero from "../components/public/Hero";
 import Services from "../components/public/Services";
+import Courses from "../components/public/Courses";
 import About from "../components/public/About";
 import WhyUs from "../components/public/WhyUs";
+import Testimonials from "../components/public/Testimonials";
 import Contact from "../components/public/Contact";
 
 export default function Home() {
@@ -18,8 +20,10 @@ export default function Home() {
     <>
       <Hero />
       <Services onSelect={chooseService} />
+      <Courses />
       <About />
       <WhyUs />
+      <Testimonials />
       <Contact service={service} onServiceChange={setService} />
     </>
   );

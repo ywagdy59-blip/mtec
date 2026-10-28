@@ -55,7 +55,12 @@ router.patch(
   togglePublishCourse
 );
 
-router.get("/:id/video", authMiddleware, validateCourseId, getCourseVideo);
+router.get(
+  "/:id/video",
+  optionalAuth,
+  validateCourseId,
+  getCourseVideo
+);
 
 router.patch(
   "/:id",

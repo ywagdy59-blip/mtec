@@ -4,8 +4,10 @@ const path = require("path");
 const Course = require("../models/Course");
 const Category = require("../models/Category");
 const Enrollment = require("../models/Enrollment");
+const GuestOrder = require("../models/GuestOrder");
 const fs = require("fs/promises");
 const toPublicCourse = require("../utils/publicCourse");
+const { getGuestOrderFromToken } = require("../services/guestCourseAccess");
 
 const VIDEO_DIR = path.join(__dirname, "..", "uploads", "videos");
 
@@ -275,15 +277,16 @@ const deleteCourse = asyncHandler(async (req, res) => {
   const { id } = req.params;
 
   // مينفعش نمسح كورس فيه ناس دفعت فلوسها، بدل كده بنخفيه
-  const enrollmentsCount = await Enrollment.countDocuments({
-    course: id,
-    status: "paid",
-  });
+  const [enrollmentsCount, guestOrdersCount] = await Promise.all([
+    Enrollment.countDocuments({ course: id, status: "paid" }),
+    GuestOrder.countDocuments({ course: id, status: "paid" }),
+  ]);
+  const paidOrdersCount = enrollmentsCount + guestOrdersCount;
 
-  if (enrollmentsCount > 0) {
+  if (paidOrdersCount > 0) {
     res.status(409);
     throw new Error(
-      `Cannot delete a course with ${enrollmentsCount} enrollment(s). Unpublish it instead`
+      `Cannot delete a course with ${paidOrdersCount} paid enrollment(s) or order(s). Unpublish it instead`
     );
   }
 
@@ -296,6 +299,7 @@ const deleteCourse = asyncHandler(async (req, res) => {
   await removeVideoFile(course.video);
   // محاولات الدفع المعلقة على كورس اتمسح ملهاش لازمة
   await Enrollment.deleteMany({ course: id, status: "pending" });
+  await GuestOrder.deleteMany({ course: id, status: { $ne: "paid" } });
 
   res.status(200).json({
     success: true,
@@ -312,16 +316,21 @@ const getCourseVideo = asyncHandler(async (req, res, next) => {
     throw new Error("Course video not found");
   }
 
-  if (
-    req.user.role !== "admin" &&
-    !(await Enrollment.exists({
-      course: course._id,
-      user: req.user.id,
-      status: "paid",
-    }))
-  ) {
+  const isEnrolled =
+    req.user &&
+    (req.user.role === "admin" ||
+      (await Enrollment.exists({
+        course: course._id,
+        user: req.user.id,
+        status: "paid",
+      })));
+  const guestOrder = isEnrolled
+    ? null
+    : await getGuestOrderFromToken(req.query.accessToken, course._id);
+
+  if (!isEnrolled && !guestOrder) {
     res.status(403);
-    throw new Error("You must be enrolled to watch this course");
+    throw new Error("You must be enrolled or have a valid guest access link");
   }
 
   res.sendFile(

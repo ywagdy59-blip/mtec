@@ -9,8 +9,10 @@ import { useLang } from "../../hooks/useLang";
 const LINKS = [
   ["home", "#home"],
   ["services", "#services"],
+  ["courses", "#courses"],
   ["about", "#about"],
   ["why", "#why"],
+  ["reviews", "#reviews"],
   ["contact", "#contact"],
 ];
 

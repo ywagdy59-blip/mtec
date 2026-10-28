@@ -6,7 +6,8 @@ const Course = require("../models/Course");
 // =====================================
 // HELPERS
 // =====================================
-const escapeRegex = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const escapeRegex = (value) =>
+  value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 // هل فيه تصنيف تاني بنفس الاسم (من غير حساسية لحالة الحروف)؟
 const nameExists = (name, excludeId) => {

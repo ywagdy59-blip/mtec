@@ -21,7 +21,7 @@ CLIENT_URL=http://localhost:5173
 ADMIN_NAME=MTEC Admin
 ADMIN_EMAIL=admin@example.com
 ADMIN_PASSWORD=replace-with-a-strong-password
-STRIPE_CURRENCY=usd
+STRIPE_CURRENCY=egp
 ```
 
 Generate a random JWT secret in PowerShell, then copy its output into `JWT_SECRET` in `.env`:
@@ -30,11 +30,18 @@ Generate a random JWT secret in PowerShell, then copy its output into `JWT_SECRE
 node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"
 ```
 
-Stripe keys are only needed for payment checkout and webhook functionality:
+Stripe keys are needed for online checkout and payment confirmation:
 
 ```dotenv
 STRIPE_SECRET_KEY=your-stripe-secret-key
 STRIPE_WEBHOOK_SECRET=your-stripe-webhook-secret
+```
+
+Guest course access links are sent after a card payment is confirmed, or after an admin confirms a cash payment. Configure a Resend API key and a verified sender address:
+
+```dotenv
+RESEND_API_KEY=your-resend-api-key
+EMAIL_FROM="MTEC SkillUp <courses@your-verified-domain.com>"
 ```
 
 ## Create the admin and initial categories
