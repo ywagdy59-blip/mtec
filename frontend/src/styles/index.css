@@ -700,4 +700,88 @@ video {
     overflow-wrap: break-word;
   }
 }
+/* =========================================================
+   responsive-fix.css
+   الصق الملف ده في آخر ملف الـ CSS بتاع المشروع (بعد كل حاجة).
+   مفيش داعي تمسح حاجة قديمة، لأن اللي هنا بيكسب لأنه جاي أخير.
+   ========================================================= */
+
+/* 1) أهم إصلاح: البلوك القديم "Global Responsive" خلّى .container
+      عرضه 100% من غير حد أقصى، فالموقع بيتمدد على الشاشات الكبيرة
+      وبيبوّظ الهوامش على الموبايل. هنا بنرجّعه. */
+.container {
+  width: min(1180px, calc(100% - 2.5rem - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px)));
+  max-width: none;
+  margin-inline: auto;
+  padding-inline: 0;
+}
+@media (min-width: 1600px) {
+  .container { width: min(1320px, calc(100% - 6rem)); }
+}
+@media (max-width: 480px) {
+  .container { width: calc(100% - 2rem - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px)); }
+}
+
+/* 2) أقل عرض: بدل ما نفرض 320px وبعدين نخبّي الزيادة */
+body { min-width: 0; }
+
+/* 3) ارتفاع الشاشة على الموبايل (شريط المتصفح بيتحرك) */
+.admin, .login-page { min-height: 100vh; min-height: 100dvh; }
+.page-loader, .not-found { min-height: 60vh; min-height: 60dvh; }
+.sidebar { height: 100vh; height: 100dvh; overflow-y: auto; }
+@media (max-width: 900px) {
+  .sidebar { height: auto; overflow: visible; }
+}
+.admin-main { width: 100%; max-width: 1600px; margin-inline: auto; }
+
+/* 4) النوتش (iPhone وغيره) */
+.site-nav { padding-top: env(safe-area-inset-top, 0px); }
+.modal-backdrop { padding-bottom: max(0.5rem, env(safe-area-inset-bottom, 0px)); }
+
+/* 5) الأزرار على شاشات اللمس: مساحة ضغط مريحة */
+@media (pointer: coarse) {
+  .btn-sm, .pill, .side-link, .nav-link { min-height: 44px; display: inline-flex; align-items: center; }
+  .side-link { display: flex; }
+  .btn-icon, .nav-burger { min-width: 44px; min-height: 44px; }
+  .page-btn { min-width: 44px; height: 44px; }
+  .status-select { min-height: 36px; font-size: 16px; }
+}
+
+/* 6) منع الزوم التلقائي في iPhone عند الضغط على حقل */
+@media (max-width: 767px) {
+  .input, .select, .search-box input, .textarea { font-size: 16px; }
+}
+
+/* 7) موبايل صغير (480 وأقل) */
+@media (max-width: 480px) {
+  .btn { white-space: normal; text-align: center; }
+  .stat-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .stat-value { font-size: 1.9rem; }
+  .footer-bottom { flex-direction: column; }
+  .contact-list a { word-break: break-word; }
+}
+
+/* 8) موبايل صغير جداً (360 وأقل، Galaxy Fold وأشباهه) */
+@media (max-width: 360px) {
+  .nav-row { gap: 0.4rem; }
+  .logo-text small { display: none; }
+  .lang-switch button { padding: 0.2rem 0.5rem; }
+  .hero-stats { gap: 0.8rem; }
+  .hero-stats dt { font-size: 1.4rem; }
+  .page-btn { min-width: 38px; height: 38px; }
+  .pipeline button { font-size: 0.82rem; }
+}
+
+/* 9) موبايل أفقي (ارتفاع قليل) */
+@media (max-height: 500px) and (orientation: landscape) {
+  :root { --nav-h: 56px; }
+  .nav-row { height: 56px; }
+  .hero { padding-block: 2rem 3rem; }
+  .modal { max-height: calc(100dvh - 1rem); }
+}
+
+/* 10) العربي (RTL) */
+.code-body, .term-body { direction: ltr; text-align: left; }
+.status-select { padding-block: 0.25rem; padding-inline: 0.7rem 1.7rem; }
+[dir="rtl"] .status-select { background-position: left 0.6rem center; }
 
